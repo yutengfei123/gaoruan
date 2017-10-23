@@ -1,87 +1,190 @@
 /********************************************************************/
 /* Copyright (C) SSE-USTC, 2012-2013                                */
 /*                                                                  */
-/*  FILE NAME             :  testlinktabe.c                         */
+/*  FILE NAME             :  linktabe.c                             */
 /*  PRINCIPAL AUTHOR      :  Mengning                               */
 /*  SUBSYSTEM NAME        :  LinkTable                              */
 /*  MODULE NAME           :  LinkTable                              */
 /*  LANGUAGE              :  C                                      */
 /*  TARGET ENVIRONMENT    :  ANY                                    */
 /*  DATE OF FIRST RELEASE :  2012/12/30                             */
-/*  DESCRIPTION           :  test of Link Table                     */
+/*  DESCRIPTION           :  interface of Link Table                */
 /********************************************************************/
 
 /*
  * Revision log:
  *
  * Created by Mengning,2012/12/30
- * Verified callback and head/next for search by Mengning,2012/09/17
+ * Provide right Callback interface by Mengning,2012/09/17
  *
  */
 
 #include<stdio.h>
 #include<stdlib.h>
-#include<assert.h>
+
 #include"linktable.h"
 
-#define debug   
-
-typedef struct Node
+/*
+ * Create a LinkTable
+ */
+tLinkTable * CreateLinkTable()
 {
-    tLinkTableNode * pNext;
-    int data;
-}tNode;
-
-tNode * Search(tLinkTable *pLinkTable);
-int SearchCondition(tLinkTableNode * pLinkTableNode);
-
-int main()
-{
-    int i;
-    tLinkTable * pLinkTable = CreateLinkTable();
-    assert(pLinkTable != NULL);
-    for(i = 0; i < 10; i++)
+    tLinkTable * pLinkTable = (tLinkTable *)malloc(sizeof(tLinkTable));
+    if(pLinkTable == NULL)
     {
-        tNode* pNode = (tNode*)malloc(sizeof(tNode));
-        pNode->data = i;
-        debug("AddLinkTableNode\n");
-        AddLinkTableNode(pLinkTable,(tLinkTableNode *)pNode);
+        return NULL;
     }
-    /* search by callback */
-    debug("SearchLinkTableNode\n");
-    tNode* pTempNode = (tNode*)SearchLinkTableNode(pLinkTable,SearchCondition);
-    printf("%d\n",pTempNode->data);
-    /* search one by one */
-    pTempNode = Search(pLinkTable);
-    printf("%d\n",pTempNode->data);
-    debug("DelLinkTableNode\n");
-    DelLinkTableNode(pLinkTable,(tLinkTableNode *)pTempNode);
-    free(pTempNode);
-    DeleteLinkTable(pLinkTable);
+    pLinkTable->pHead = NULL;
+    pLinkTable->pTail = NULL;
+    pLinkTable->SumOfNode = 0;
+    pthread_mutex_init(&(pLinkTable->mutex), NULL);
+    return pLinkTable;
+}
+/*
+ * Delete a LinkTable
+ */
+int DeleteLinkTable(tLinkTable *pLinkTable)
+{
+    if(pLinkTable == NULL)
+    {
+        return FAILURE;
+    }
+    while(pLinkTable->pHead != NULL)
+    {
+        tLinkTableNode * p = pLinkTable->pHead;
+        pthread_mutex_lock(&(pLinkTable->mutex));
+        pLinkTable->pHead = pLinkTable->pHead->pNext;
+        pLinkTable->SumOfNode -= 1 ;
+        pthread_mutex_unlock(&(pLinkTable->mutex));
+        free(p);
+    }
+    pLinkTable->pHead = NULL;
+    pLinkTable->pTail = NULL;
+    pLinkTable->SumOfNode = 0;
+    pthread_mutex_destroy(&(pLinkTable->mutex));
+    free(pLinkTable);
+    return SUCCESS;		
+}
+/*
+ * Add a LinkTableNode to LinkTable
+ */
+int AddLinkTableNode(tLinkTable *pLinkTable,tLinkTableNode * pNode)
+{
+    if(pLinkTable == NULL || pNode == NULL)
+    {
+        return FAILURE;
+    }
+    pNode->pNext = NULL;
+    pthread_mutex_lock(&(pLinkTable->mutex));
+    if(pLinkTable->pHead == NULL)
+    {
+        pLinkTable->pHead = pNode;
+    }
+    if(pLinkTable->pTail == NULL)
+    {
+        pLinkTable->pTail = pNode;
+    }
+    else
+    {
+        pLinkTable->pTail->pNext = pNode;
+        pLinkTable->pTail = pNode;
+    }
+    pLinkTable->SumOfNode += 1 ;
+    pthread_mutex_unlock(&(pLinkTable->mutex));
+    return SUCCESS;		
+}
+/*
+ * Delete a LinkTableNode from LinkTable
+ */
+int DelLinkTableNode(tLinkTable *pLinkTable,tLinkTableNode * pNode)
+{
+    if(pLinkTable == NULL || pNode == NULL)
+    {
+        return FAILURE;
+    }
+    pthread_mutex_lock(&(pLinkTable->mutex));
+    if(pLinkTable->pHead == pNode)
+    {
+        pLinkTable->pHead = pLinkTable->pHead->pNext;
+        pLinkTable->SumOfNode -= 1 ;
+        if(pLinkTable->SumOfNode == 0)
+        {
+            pLinkTable->pTail = NULL;	
+        }
+        pthread_mutex_unlock(&(pLinkTable->mutex));
+        return SUCCESS;
+    }
+    tLinkTableNode * pTempNode = pLinkTable->pHead;
+    while(pTempNode != NULL)
+    {    
+        if(pTempNode->pNext == pNode)
+        {
+            pTempNode->pNext = pTempNode->pNext->pNext;
+            pLinkTable->SumOfNode -= 1 ;
+            if(pLinkTable->SumOfNode == 0)
+            {
+                pLinkTable->pTail = NULL;	
+            }
+            pthread_mutex_unlock(&(pLinkTable->mutex));
+            return SUCCESS;				    
+        }
+        pTempNode = pTempNode->pNext;
+    }
+    pthread_mutex_unlock(&(pLinkTable->mutex));
+    return FAILURE;		
 }
 
-tNode * Search(tLinkTable *pLinkTable)
+/*
+ * Search a LinkTableNode from LinkTable
+ * int Conditon(tLinkTableNode * pNode);
+ */
+tLinkTableNode * SearchLinkTableNode(tLinkTable *pLinkTable, int Conditon(tLinkTableNode * pNode))
 {
-    debug("Search GetLinkTableHead\n");
-    tNode * pNode = (tNode*)GetLinkTableHead(pLinkTable);
-    while(pNode != NULL)
+    if(pLinkTable == NULL || Conditon == NULL)
     {
-        if(pNode->data == 5)
+        return NULL;
+    }
+    tLinkTableNode * pNode = pLinkTable->pHead;
+    while(pNode != pLinkTable->pTail)
+    {    
+        if(Conditon(pNode) == SUCCESS)
         {
-            return  pNode;  
+            return pNode;				    
         }
-        debug("GetNextLinkTableNode\n");
-        pNode = (tNode*)GetNextLinkTableNode(pLinkTable,(tLinkTableNode *)pNode);
+        pNode = pNode->pNext;
     }
     return NULL;
 }
 
-int SearchCondition(tLinkTableNode * pLinkTableNode)
+/*
+ * get LinkTableHead
+ */
+tLinkTableNode * GetLinkTableHead(tLinkTable *pLinkTable)
 {
-    tNode * pNode = (tNode *)pLinkTableNode;
-    if(pNode->data == 6)
+    if(pLinkTable == NULL)
     {
-        return  SUCCESS;  
+        return NULL;
+    }    
+    return pLinkTable->pHead;
+}
+
+/*
+ * get next LinkTableNode
+ */
+tLinkTableNode * GetNextLinkTableNode(tLinkTable *pLinkTable,tLinkTableNode * pNode)
+{
+    if(pLinkTable == NULL || pNode == NULL)
+    {
+        return NULL;
     }
-    return FAILURE;	       
+    tLinkTableNode * pTempNode = pLinkTable->pHead;
+    while(pTempNode != NULL)
+    {    
+        if(pTempNode == pNode)
+        {
+            return pTempNode->pNext;				    
+        }
+        pTempNode = pTempNode->pNext;
+    }
+    return NULL;
 }
